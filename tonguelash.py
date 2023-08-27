@@ -2,6 +2,13 @@ import discord
 from discord.ext import commands
 import time
 
+# LONGTERM LIST OF FEATURES:
+# Button to ping unaccepted players
+# Button to ping all players in a game
+# Button to deny a queue pop and trigger refills early to avoid wasting time
+# Need to test how multiple games affects the bot
+# Need to test with more people in general
+
 # TODO: Limit to only the wanted intents in the future
 intents = discord.Intents.all()
 # intents.message_content = True
@@ -49,7 +56,52 @@ games = {}
 drops = {}
 endcalls = {}
 
+
+# Starting work on Buttons
+class QueueButtons(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+    @discord.ui.button(label="Join Queue", style=discord.ButtonStyle.green)
+    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await add_player_to_queue(interaction.user)
+
+    @discord.ui.button(label="Leave Queue", style=discord.ButtonStyle.danger)
+    async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await remove_player_from_queue(interaction.user)
+
+
+class ReadyButton(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+    @discord.ui.button(label="Ready!", style=discord.ButtonStyle.primary)
+    async def ready_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        accept_player(interaction.user)
+
+
+class MatchButtons(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+    @discord.ui.button(label="Play Again!", style=discord.ButtonStyle.green)
+    async def requeue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if interaction.user in games[interaction.message]:
+            await requeue_player(interaction.message, interaction.user)
+
+    @discord.ui.button(label="Drop From Queue", style=discord.ButtonStyle.danger)
+    async def drop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if interaction.user in games[interaction.message]:
+            await drop_player(interaction.message, interaction.user)
+
+
 # reaction handler
+# will be deprecated soon but keeping this in as backup
 @bot.event
 async def on_reaction_add(reaction, user):
     reacted_message = reaction.message
@@ -95,12 +147,14 @@ async def create_queue(ctx):
     global queue_message
     global queue_channel
 
-    message = await ctx.send("Current Queue:")
+    message = await ctx.send("Current Queue:", view=QueueButtons())
     queue_message = message
     queue_channel = message.channel
 
-    await message.add_reaction("👍")
-    await message.add_reaction("👎")
+    # deprecated now with button functionality
+    # await message.add_reaction("👍")
+    # await message.add_reaction("👎")
+
 
 # method called on react
 async def add_player_to_queue(member: discord.Member):
@@ -206,6 +260,8 @@ async def afk_check_pop(popped_players, new_players):
     popped_members = popped_players.copy()
     waiting_members = new_players.copy()
 
+    print(len(popped_members))
+
     # create a header listing match members so you can see who's actually in the match
     header = "Match Ready For:  \n"
 
@@ -224,9 +280,9 @@ async def afk_check_pop(popped_players, new_players):
 
     # add message and reaction
     # copy needed to fix mem issues with async
-    pop_message_temp = await queue_channel.send(content=temp)
+    pop_message_temp = await queue_channel.send(content=temp, view=ReadyButton())
     pop_message = pop_message_temp
-    await pop_message.add_reaction("👍")
+    # await pop_message.add_reaction("👍")
 
     # game state holder
     has_game = False
@@ -261,21 +317,34 @@ async def afk_check_pop(popped_players, new_players):
     # Pop sequence ends when a match starts or time runs out
     is_popping = False
 
+    print(len(popped_members))
+
     if has_game:
         await create_game(popped_players)
     else:
         # backfill mech if time runs out
         # check if there are enough players to make a new game
-        for member in popped_members:
-            if member in waiting_members:
-                popped_members.remove(member)
+        temp_members = popped_members.copy()
+        print(temp_members[2])
+
+        # for player in temp_members:
+        #     print(player.display_name)
+        #     if player in waiting_members:
+        #         print("Removed " + player.display_name)
+        #         temp_members.remove(player)
+        #     else:
+        #         print("Keeping " + player.display_name)\
+
+        temp_members = filter(lambda x: x not in waiting_members, temp_members)
+
         # if there are enough then fill in and restart the check
         if len(queue_members) >= len(waiting_members):
             print("refilling")
             await pop_queue(popped_members)
         # return all members to queue
         else:
-            for member in popped_members:
+            popped_members = []
+            for member in temp_members:
                 await add_player_to_queue(member)
 
     # remove the expired pop message
@@ -294,12 +363,7 @@ async def remove_player_from_queue(member: discord.Member):
     except ValueError:
         pass
 
-    temp = "Current Queue:  \n"
-
-    for member in queue_members:
-        temp += (member.display_name + "\n")
-
-    await queue_message.edit(content=temp)
+    await queue_message.edit(content=get_queue_content())
 
 
 # After a ready sequence can create a game
@@ -319,15 +383,17 @@ async def create_game(players):
         temp += f'<@{id}> '
 
     # create game message
-    game_message = await queue_channel.send(content=temp)
-    await game_message.add_reaction("👍")
-    await game_message.add_reaction("👎")
+    game_message = await queue_channel.send(content=temp, view=MatchButtons())
+    # await game_message.add_reaction("👍")
+    # await game_message.add_reaction("👎")
 
     # store game info in respective dictionaries
     # placeholder info for drops/endcalls
     games[game_message] = popped_members.copy()
     drops[game_message] = []
     endcalls[game_message] = []
+
+    popped_members = []
 
 
 # Removing a game from memory after it ends and returning players to queue
@@ -336,17 +402,19 @@ async def end_game(game_msg):
     game_members = games[game_msg]
     droppers = drops[game_msg]
 
+    # delete game info and message
+    del games[game_msg]
+    del drops[game_msg]
+    del endcalls[game_msg]
+
     # Add all non-dropped players to the END of queue.
     # TODO: Add an option to add them to the front.
     for member in game_members:
         if member not in droppers:
             await add_player_to_queue(member)
 
-    # delete game info and message
-    del games[game_msg]
-    del drops[game_msg]
-    del endcalls[game_msg]
     await game_msg.delete()
+
 
 # RUN THE BOT (VERY IMPORTANT)
 bot.run(token)
