@@ -100,6 +100,72 @@ class MatchButtons(discord.ui.View):
             await drop_player(interaction.message, interaction.user)
 
 
+# update to avoid using time.sleep in afk
+# still a little buggy but I'm being rate-limited and I'm not sure if that's the problem
+class AfkTimerCog(commands.Cog):
+    def __init__(self, popped_players):
+        self.remaining_time = queue_timer
+        # self.timer.start()
+        self.edit_message = ""
+        self.header = "Match Ready For:  \n"
+        self.popped_list = popped_players
+
+        for member in popped_players:
+            self.header += f'<@{member.id}> '
+
+    def cog_unload(self):
+        self.timer.cancel()
+
+    def get_time(self):
+        return self.remaining_time
+
+    async def start_timer(self):
+        global is_popping
+
+        is_popping = True
+        self.remaining_time = queue_timer
+
+        self.edit_message = await queue_channel.send(content=self.header, view=ReadyButton(), embed=get_waiting_embed(queue_timer))
+
+        self.timer.start()
+
+    @tasks.loop(seconds=1.0)
+    async def timer(self):
+        global is_popping
+        global popped_members
+
+        await self.edit_message.edit(content=self.header, view=ReadyButton(), embed=get_waiting_embed(self.remaining_time))
+        self.remaining_time -= 1
+
+        if len(waiting_members) == 0:
+            await create_game(self.popped_list)
+            is_popping = False
+            print("deleted msg")
+            await self.edit_message.delete()
+            self.timer.stop()
+
+        if self.remaining_time < 0:
+            is_popping = False
+            temp_members = filter(lambda x: x not in waiting_members, self.popped_list)
+
+            # if there are enough then fill in and restart the check
+            if len(queue_members) >= len(waiting_members):
+                print("refilling")
+                await pop_queue(self.popped_list)
+                print("deleted msg")
+                await self.edit_message.delete()
+                self.timer.stop()
+            # return all members to queue
+            else:
+                popped_members = []
+                for member in temp_members:
+                    await add_player_to_queue(member)
+                print("deleted msg")
+                await self.edit_message.delete()
+                self.timer.stop()
+
+
+
 # reaction handler
 # will be deprecated soon but keeping this in as backup
 @bot.event
@@ -147,7 +213,7 @@ async def create_queue(ctx):
     global queue_message
     global queue_channel
 
-    message = await ctx.send("Current Queue:", view=QueueButtons())
+    message = await ctx.send("", view=QueueButtons(), embed=get_queue_embed())
     queue_message = message
     queue_channel = message.channel
 
@@ -171,7 +237,7 @@ async def add_player_to_queue(member: discord.Member):
         queue_members.append(member)
 
     # add new player to queue
-    await queue_message.edit(content=get_queue_content())
+    await queue_message.edit(content="", embed=get_queue_embed())
 
     # trigger queue pop if enough for a game
     if len(queue_members) >= players_per_game and not is_popping:
@@ -188,6 +254,46 @@ def get_queue_content():
         temp += f"<@{id}> \n"
 
     return temp
+
+
+def get_queue_embed():
+    embed = discord.Embed(title=str(len(queue_members)) + " Member(s) waiting.", description="Join with the buttons.",
+                          color=0x00ff00)
+
+    temp = ""
+    for member in queue_members:
+        temp += f"<@{member.id}> \n"
+
+    if len(queue_members) == 0:
+        temp = "Queue is empty."
+
+    embed.add_field(name="Current Queue: ", value=temp, inline=False)
+
+    return embed
+
+
+def get_waiting_embed(remaining_time):
+    embed = discord.Embed(title="Party found!", color=0x00ff00)
+
+    temp = ""
+    for member in waiting_members:
+        temp += f"<@{member.id}> "
+
+    embed.add_field(name="Waiting on: ", value=temp, inline=False)
+    embed.add_field(name="Time remaining: ", value=str(remaining_time), inline=False)
+
+    return embed
+
+def get_game_embed(game_members):
+    embed = discord.Embed(title="Full Party:", description="Only use the buttons below AFTER the party is done.",color=0x00ff00)
+
+    temp = ""
+    for member in game_members:
+        temp += f"<@{member.id}> "
+
+    embed.add_field(name="Matched with: ", value=temp, inline=False)
+
+    return embed
 
 
 # remove a player from the list of un-accepted players when they ready
@@ -243,8 +349,8 @@ async def pop_queue(prev_queue):
     queue_members = remaining_queue
 
     # update queue and initiate the afk check sequence
-    await queue_message.edit(content=get_queue_content())
-    await afk_check_pop(popped_queue, fill_players)
+    await queue_message.edit(content="", embed=get_queue_embed())
+    await afk_check_pop_beta(popped_queue, fill_players)
 
 
 # seeing who in a pop is readying
@@ -280,7 +386,7 @@ async def afk_check_pop(popped_players, new_players):
 
     # add message and reaction
     # copy needed to fix mem issues with async
-    pop_message_temp = await queue_channel.send(content=temp, view=ReadyButton())
+    pop_message_temp = await queue_channel.send(content=header, view=ReadyButton(), embed=get_waiting_embed(remaining_time))
     pop_message = pop_message_temp
     # await pop_message.add_reaction("👍")
 
@@ -299,7 +405,7 @@ async def afk_check_pop(popped_players, new_players):
 
         temp += "\nTime Remaining: " + str(remaining_time)
 
-        await pop_message.edit(content=temp)
+        await pop_message.edit(content=header, embed=get_waiting_embed(remaining_time))
 
         # Wait a second
         time.sleep(1)
@@ -353,6 +459,23 @@ async def afk_check_pop(popped_players, new_players):
     return
 
 
+# seeing who in a pop is readying
+async def afk_check_pop_beta(popped_players, new_players):
+    global pop_message
+    global popped_members
+    global waiting_members
+
+    # mem issues w/ refs requires you to make copy here
+    popped_members = popped_players.copy()
+    waiting_members = new_players.copy()
+
+    # TODO: There has to be a way to do this without time.sleep
+    # Maybe get a starting timestamp and round from current time?
+    timer_cog = AfkTimerCog(popped_players=popped_players)
+    await timer_cog.start_timer()
+
+    return
+
 # Drop a player from queue and update message.
 async def remove_player_from_queue(member: discord.Member):
     global queue_members
@@ -363,7 +486,7 @@ async def remove_player_from_queue(member: discord.Member):
     except ValueError:
         pass
 
-    await queue_message.edit(content=get_queue_content())
+    await queue_message.edit(content="", embed=get_queue_embed())
 
 
 # After a ready sequence can create a game
@@ -373,7 +496,8 @@ async def create_game(players):
     global drops
 
     # Could also be moved to a convenience function
-    temp = "Game With: \n "
+    # temp = "Party found: \n "
+    temp = ""
 
     # This was for Feanor please don't ask
     # EDIT: this bit was stupid and I'm gonna fix it now
@@ -383,7 +507,7 @@ async def create_game(players):
         temp += f'<@{id}> '
 
     # create game message
-    game_message = await queue_channel.send(content=temp, view=MatchButtons())
+    game_message = await queue_channel.send(content=temp, view=MatchButtons(), embed=get_game_embed(popped_members))
     # await game_message.add_reaction("👍")
     # await game_message.add_reaction("👎")
 
@@ -414,6 +538,7 @@ async def end_game(game_msg):
             await add_player_to_queue(member)
 
     await game_msg.delete()
+
 
 
 # RUN THE BOT (VERY IMPORTANT)

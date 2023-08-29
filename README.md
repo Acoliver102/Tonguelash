@@ -7,6 +7,8 @@ It runs off of python and requires discord.py.
 
 Tonguelash is designed to be a simple as possible to set up and host. All you need is your bot's token and you should be good to go.
 
+Credit goes to BigBoot/fang as the bot that inspired me to make this, both positively and negatively.
+
 ## What is Tonguelash? Why should I use it over other queue bots?
 It's just a way of making a line of people and then getting X number of people who are here pulled into separate parties. Could be useful for LFG servers, for instance.
 
