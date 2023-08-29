@@ -2,34 +2,19 @@ import discord
 from discord.ext import commands
 import time
 
-# LONGTERM LIST OF FEATURES:
-# Button to ping unaccepted players
-# Button to ping all players in a game
-# Button to deny a queue pop and trigger refills early to avoid wasting time
-# Need to test how multiple games affects the bot
-# Need to test with more people in general
-
-# TODO: Limit to only the wanted intents in the future
-intents = discord.Intents.all()
-# intents.message_content = True
-# intents.reactions = True
-
-# bot token
-token = 'Bot Token Here!'
+import config
+from config import *
+import embeds
 
 # TODO: Move command_prefix to a constants file
-bot = commands.Bot(command_prefix='~', intents=intents)
+bot = commands.Bot(command_prefix=command_prefix, intents=intents)
 
 # placeholders until the global vars are init with first call
 queue_channel = bot.get_channel(0)
-queue_message = 0
+queue_message: discord.Message
 
 # placeholder until a new pop_message is created
 pop_message = 0
-
-# number of players need for a pop
-# TODO: Move to a constants file
-players_per_game = 10
 
 # placeholders for data storage list
 # maybe make a data struct class for this?
@@ -39,13 +24,6 @@ waiting_members = []
 
 # global bool to prevent simultaneous pops
 is_popping = False
-
-# number of seconds queue pops take
-queue_timer = 120
-
-# minimum number of people who need to gg/domino in order to end a game
-# TODO: Make games time out after x minutes to avoid locked queues
-min_endcalls = 2
 
 # Placeholder dicts to store game data
 # Uses the game message as a key for all three
@@ -100,126 +78,18 @@ class MatchButtons(discord.ui.View):
             await drop_player(interaction.message, interaction.user)
 
 
-# update to avoid using time.sleep in afk
-# still a little buggy but I'm being rate-limited and I'm not sure if that's the problem
-class AfkTimerCog(commands.Cog):
-    def __init__(self, popped_players):
-        self.remaining_time = queue_timer
-        # self.timer.start()
-        self.edit_message = ""
-        self.header = "Match Ready For:  \n"
-        self.popped_list = popped_players
-
-        for member in popped_players:
-            self.header += f'<@{member.id}> '
-
-    def cog_unload(self):
-        self.timer.cancel()
-
-    def get_time(self):
-        return self.remaining_time
-
-    async def start_timer(self):
-        global is_popping
-
-        is_popping = True
-        self.remaining_time = queue_timer
-
-        self.edit_message = await queue_channel.send(content=self.header, view=ReadyButton(), embed=get_waiting_embed(queue_timer))
-
-        self.timer.start()
-
-    @tasks.loop(seconds=1.0)
-    async def timer(self):
-        global is_popping
-        global popped_members
-
-        await self.edit_message.edit(content=self.header, view=ReadyButton(), embed=get_waiting_embed(self.remaining_time))
-        self.remaining_time -= 1
-
-        if len(waiting_members) == 0:
-            await create_game(self.popped_list)
-            is_popping = False
-            print("deleted msg")
-            await self.edit_message.delete()
-            self.timer.stop()
-
-        if self.remaining_time < 0:
-            is_popping = False
-            temp_members = filter(lambda x: x not in waiting_members, self.popped_list)
-
-            # if there are enough then fill in and restart the check
-            if len(queue_members) >= len(waiting_members):
-                print("refilling")
-                await pop_queue(self.popped_list)
-                print("deleted msg")
-                await self.edit_message.delete()
-                self.timer.stop()
-            # return all members to queue
-            else:
-                popped_members = []
-                for member in temp_members:
-                    await add_player_to_queue(member)
-                print("deleted msg")
-                await self.edit_message.delete()
-                self.timer.stop()
-
-
-
-# reaction handler
-# will be deprecated soon but keeping this in as backup
-@bot.event
-async def on_reaction_add(reaction, user):
-    reacted_message = reaction.message
-
-    # ignore own reaction to posts
-    if user == bot.user:
-        pass
-    # reactions to queue
-    elif reacted_message == queue_message:
-        # add/remove player and remove the reaction
-        if reaction.emoji == "👍":
-            await reaction.remove(user)
-            await add_player_to_queue(user)
-        elif reaction.emoji == "👎":
-            await reaction.remove(user)
-            await remove_player_from_queue(user)
-    # reactions to a pop
-    elif reacted_message == pop_message:
-        # ready a player and remove reaction
-        if reaction.emoji == "👍":
-            await reaction.remove(user)
-            accept_player(user)
-    # reaction to an ongoing game
-    elif reacted_message in games.keys():
-        # remove reaction and act accordingly
-        # check if player is actually in the game they are reacting to
-        # TODO: Assigning game nums to avoid confusion
-        if reaction.emoji == "👍":
-            await reaction.remove(user)
-            if user in games[reacted_message]:
-                await requeue_player(reacted_message, user)
-        if reaction.emoji == "👎":
-            await reaction.remove(user)
-            if user in games[reacted_message]:
-                await drop_player(reacted_message, user)
-
-
 # create_queue command
 # TODO: Command integration for: queue reset, queue ping, and players ping
 @bot.command()
+@commands.has_permissions(administrator=True)
 async def create_queue(ctx):
     # storage for where the queue message is located
     global queue_message
     global queue_channel
 
-    message = await ctx.send("", view=QueueButtons(), embed=get_queue_embed())
+    message = await ctx.send("", view=QueueButtons(), embed=embeds.get_queue_embed(queue_members=queue_members))
     queue_message = message
     queue_channel = message.channel
-
-    # deprecated now with button functionality
-    # await message.add_reaction("👍")
-    # await message.add_reaction("👎")
 
 
 # method called on react
@@ -237,63 +107,41 @@ async def add_player_to_queue(member: discord.Member):
         queue_members.append(member)
 
     # add new player to queue
-    await queue_message.edit(content="", embed=get_queue_embed())
+    await queue_message.edit(content="", embed=embeds.get_queue_embed(queue_members=queue_members))
 
     # trigger queue pop if enough for a game
     if len(queue_members) >= players_per_game and not is_popping:
         await pop_queue([])
 
 
-# convenience member to quickly get the formatting from queue_members
-# could be nice to have similar functions for pops and games in the future that could be moved to a lib
-def get_queue_content():
-    temp = "Current Queue:  \n"
+# method called on party reset
+async def add_players_to_queue_front(member_list: list):
+    global queue_members
+    global queue_message
 
-    for member in queue_members:
-        id = member.id
-        temp += f"<@{id}> \n"
+    queue_members = member_list + queue_members
 
-    return temp
+    # add new player to queue
+    await queue_message.edit(content="", embed=embeds.get_queue_embed(queue_members=queue_members))
 
-
-def get_queue_embed():
-    embed = discord.Embed(title=str(len(queue_members)) + " Member(s) waiting.", description="Join with the buttons.",
-                          color=0x00ff00)
-
-    temp = ""
-    for member in queue_members:
-        temp += f"<@{member.id}> \n"
-
-    if len(queue_members) == 0:
-        temp = "Queue is empty."
-
-    embed.add_field(name="Current Queue: ", value=temp, inline=False)
-
-    return embed
+    # trigger queue pop if enough for a game
+    if len(queue_members) >= players_per_game and not is_popping:
+        await pop_queue([])
 
 
-def get_waiting_embed(remaining_time):
-    embed = discord.Embed(title="Party found!", color=0x00ff00)
+async def add_player_list_to_queue(member_list: list):
+    global queue_members
+    global queue_message
 
-    temp = ""
-    for member in waiting_members:
-        temp += f"<@{member.id}> "
 
-    embed.add_field(name="Waiting on: ", value=temp, inline=False)
-    embed.add_field(name="Time remaining: ", value=str(remaining_time), inline=False)
+    queue_members = queue_members + member_list
 
-    return embed
+    # add new player to queue
+    await queue_message.edit(content="", embed=embeds.get_queue_embed(queue_members=queue_members))
 
-def get_game_embed(game_members):
-    embed = discord.Embed(title="Full Party:", description="Only use the buttons below AFTER the party is done.",color=0x00ff00)
-
-    temp = ""
-    for member in game_members:
-        temp += f"<@{member.id}> "
-
-    embed.add_field(name="Matched with: ", value=temp, inline=False)
-
-    return embed
+    # trigger queue pop if enough for a game
+    if len(queue_members) >= players_per_game and not is_popping:
+        await pop_queue([])
 
 
 # remove a player from the list of un-accepted players when they ready
@@ -349,7 +197,7 @@ async def pop_queue(prev_queue):
     queue_members = remaining_queue
 
     # update queue and initiate the afk check sequence
-    await queue_message.edit(content="", embed=get_queue_embed())
+    await queue_message.edit(content="", embed=embeds.get_queue_embed(queue_members=queue_members))
     await afk_check_pop(popped_queue, fill_players)
 
 
@@ -365,8 +213,6 @@ async def afk_check_pop(popped_players, new_players):
     # mem issues w/ refs requires you to make copy here
     popped_members = popped_players.copy()
     waiting_members = new_players.copy()
-
-    print(popped_members)
 
     # create a header listing match members so you can see who's actually in the match
     header = "Match Ready For:  \n"
@@ -386,7 +232,9 @@ async def afk_check_pop(popped_players, new_players):
 
     # add message and reaction
     # copy needed to fix mem issues with async
-    pop_message_temp = await queue_channel.send(content=header, view=ReadyButton(), embed=get_waiting_embed(remaining_time))
+    pop_message_temp = await queue_channel.send(content=header, view=ReadyButton(),
+                                                embed=embeds.get_waiting_embed(waiting_members=waiting_members,
+                                                                               remaining_time=remaining_time))
     pop_message = pop_message_temp
     # await pop_message.add_reaction("👍")
 
@@ -406,7 +254,8 @@ async def afk_check_pop(popped_players, new_players):
 
         temp += "\nTime Remaining: " + str(remaining_time)
 
-        await pop_message.edit(content=header, embed=get_waiting_embed(remaining_time))
+        await pop_message.edit(content=header, embed=embeds.get_waiting_embed(waiting_members=waiting_members,
+                                                                              remaining_time=remaining_time))
 
         # Wait a second
         time.sleep(1)
@@ -423,8 +272,6 @@ async def afk_check_pop(popped_players, new_players):
 
     # Pop sequence ends when a match starts or time runs out
     is_popping = False
-
-    print(len(popped_members))
 
     if has_game:
         await create_game(popped_players)
@@ -459,23 +306,6 @@ async def afk_check_pop(popped_players, new_players):
     return
 
 
-# seeing who in a pop is readying
-async def afk_check_pop_beta(popped_players, new_players):
-    global pop_message
-    global popped_members
-    global waiting_members
-
-    # mem issues w/ refs requires you to make copy here
-    popped_members = popped_players.copy()
-    waiting_members = new_players.copy()
-
-    # TODO: There has to be a way to do this without time.sleep
-    # Maybe get a starting timestamp and round from current time?
-    timer_cog = AfkTimerCog(popped_players=popped_players)
-    await timer_cog.start_timer()
-
-    return
-
 # Drop a player from queue and update message.
 async def remove_player_from_queue(member: discord.Member):
     global queue_members
@@ -486,7 +316,7 @@ async def remove_player_from_queue(member: discord.Member):
     except ValueError:
         pass
 
-    await queue_message.edit(content="", embed=get_queue_embed())
+    await queue_message.edit(content="", embed=embeds.get_queue_embed(queue_members=queue_members))
 
 
 # After a ready sequence can create a game
@@ -507,7 +337,8 @@ async def create_game(players):
         temp += f'<@{id}> '
 
     # create game message
-    game_message = await queue_channel.send(content=temp, view=MatchButtons(), embed=get_game_embed(popped_members))
+    game_message = await queue_channel.send(content=temp, view=MatchButtons(),
+                                            embed=embeds.get_game_embed(game_members=popped_members))
     # await game_message.add_reaction("👍")
     # await game_message.add_reaction("👎")
 
@@ -531,14 +362,14 @@ async def end_game(game_msg):
     del drops[game_msg]
     del endcalls[game_msg]
 
-    # Add all non-dropped players to the END of queue.
-    # TODO: Add an option to add them to the front.
-    for member in game_members:
-        if member not in droppers:
-            await add_player_to_queue(member)
-
     await game_msg.delete()
 
+    # Add all non-dropped players to the END of queue.
+    # TODO: Add an option to add them to the front.
+    if config.return_to_front:
+        await add_players_to_queue_front(list(filter(lambda x: x not in droppers, game_members)))
+    else:
+        await add_player_list_to_queue(list(filter(lambda x: x not in droppers, game_members)))
 
 
 # RUN THE BOT (VERY IMPORTANT)
