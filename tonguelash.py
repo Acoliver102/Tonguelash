@@ -350,7 +350,7 @@ async def pop_queue(prev_queue):
 
     # update queue and initiate the afk check sequence
     await queue_message.edit(content="", embed=get_queue_embed())
-    await afk_check_pop_beta(popped_queue, fill_players)
+    await afk_check_pop(popped_queue, fill_players)
 
 
 # seeing who in a pop is readying
