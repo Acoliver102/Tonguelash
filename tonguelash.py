@@ -366,7 +366,7 @@ async def afk_check_pop(popped_players, new_players):
     popped_members = popped_players.copy()
     waiting_members = new_players.copy()
 
-    print(len(popped_members))
+    print(popped_members)
 
     # create a header listing match members so you can see who's actually in the match
     header = "Match Ready For:  \n"
@@ -395,6 +395,7 @@ async def afk_check_pop(popped_players, new_players):
 
     # TODO: There has to be a way to do this without time.sleep
     # Maybe get a starting timestamp and round from current time?
+    # Investigate using UNIX timestamps to display remaining time
     while remaining_time >= 0:
         # Update with remaining players and timer
         temp = header + "\nWaiting On: \n "
@@ -431,7 +432,6 @@ async def afk_check_pop(popped_players, new_players):
         # backfill mech if time runs out
         # check if there are enough players to make a new game
         temp_members = popped_members.copy()
-        print(temp_members[2])
 
         # for player in temp_members:
         #     print(player.display_name)
@@ -441,12 +441,12 @@ async def afk_check_pop(popped_players, new_players):
         #     else:
         #         print("Keeping " + player.display_name)\
 
-        temp_members = filter(lambda x: x not in waiting_members, temp_members)
+        temp_members = list(filter(lambda x: x not in waiting_members, temp_members))
 
         # if there are enough then fill in and restart the check
         if len(queue_members) >= len(waiting_members):
             print("refilling")
-            await pop_queue(popped_members)
+            await pop_queue(temp_members)
         # return all members to queue
         else:
             popped_members = []
