@@ -1,7 +1,9 @@
-# placeholder until a new pop_message is created
-import time
+import time, datetime
+import sched
 
 import discord
+from discord.ext import commands, tasks
+
 import config
 import embeds
 
@@ -11,16 +13,34 @@ pop_message: discord.message
 popped_members = []
 waiting_members = []
 
+# ending timestamp
+end_time = ""
+
 
 # since these buttons only apply inside this handler they can be here
 class ReadyButton(discord.ui.View):
-    def __init__(self):
+    def __init__(self, head_text):
         super().__init__()
+        self.header = head_text
 
     @discord.ui.button(label="Ready!", style=discord.ButtonStyle.primary)
     async def ready_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         accept_player(interaction.user)
+        await interaction.message.edit(content=self.header,
+                                       embed=embeds.get_waiting_embed_unix(waiting_members=waiting_members,
+                                                                           end_time=end_time))
+
+
+@tasks.loop(seconds=1, count=config.queue_timer)
+async def queue_timer():
+    if len(waiting_members) == 0:
+        queue_timer.stop()
+
+
+@queue_timer.after_loop
+async def after_timer():
+    return
 
 
 # remove a player from the list of un-accepted players when they ready
@@ -36,9 +56,14 @@ async def afk_check_pop(channel, popped_players, new_players):
     global popped_members
     global waiting_members
     global pop_message
+    global end_time
 
     # set up queue timer
     remaining_time = config.queue_timer
+
+    end_time = f'<t:{int(time.time()) + config.queue_timer}:R>'
+
+    scheduler = sched.scheduler(time.time, time.sleep)
 
     # mem issues w/ refs requires you to make copy here
     popped_members = popped_players.copy()
@@ -64,37 +89,13 @@ async def afk_check_pop(channel, popped_players, new_players):
 
     # add message and reaction
     # copy needed to fix mem issues with async
-    pop_message_temp = await channel.send(content=header, view=ReadyButton(),
-                                          embed=embeds.get_waiting_embed(waiting_members=waiting_members,
-                                                                         remaining_time=remaining_time))
+    pop_message_temp = await channel.send(content=header, view=ReadyButton(header),
+                                          embed=embeds.get_waiting_embed_unix(waiting_members=waiting_members,
+                                                                              end_time=end_time))
     pop_message = pop_message_temp
 
-    # TODO: There has to be a way to do this without time.sleep
-    # TODO: Investigate using sched module
-    # Maybe get a starting timestamp and round from current time?
-    # Investigate using UNIX timestamps to display remaining time
-    while remaining_time >= 0:
-        # Update with remaining players and timer
-        temp = header + "\nWaiting On: \n "
-
-        for member in waiting_members:
-            id = member.id
-            temp += f'<@{id}> '
-
-        temp += "\nTime Remaining: " + str(remaining_time)
-
-        await pop_message.edit(content=header, embed=embeds.get_waiting_embed(waiting_members=waiting_members,
-                                                                              remaining_time=remaining_time))
-
-        # Wait a second
-        time.sleep(1)
-
-        remaining_time -= 1
-
-        # if everyone is ready start the match
-        # Probably could be done without the bool but it's not a big deal
-        if len(waiting_members) == 0:
-            break
+    # start queue countdown
+    await queue_timer.start()
 
     # remove the expired pop message
     await pop_message_temp.delete()

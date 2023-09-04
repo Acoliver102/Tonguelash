@@ -41,3 +41,16 @@ def get_waiting_embed(waiting_members: list, remaining_time):
     embed.add_field(name="Time remaining: ", value=str(remaining_time), inline=False)
 
     return embed
+
+def get_waiting_embed_unix(waiting_members: list, end_time):
+    embed = discord.Embed(title="Party found!", color=0x00ff00)
+
+    temp = ""
+    for member in waiting_members:
+        temp += f"<@{member.id}> "
+
+    embed.add_field(name="Waiting on: ", value=temp, inline=False)
+    embed.add_field(name="Time remaining: ", value=end_time, inline=False)
+
+    return embed
+
