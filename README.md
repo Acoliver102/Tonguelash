@@ -19,12 +19,12 @@ It also uses a AFK check to avoid creating parties with people who left themselv
 ## What doesn't Tonguelash do?
 In order to avoid adding extra elements to set up such as databases, Tonguelash does not save any persistent user info. If you want to keep stats or preferences, you should look elsewhere.
 
-It's very barebones right now, so it may not be the most pleasing on the eyes. We're... working on that.
+It's very barebones right now, so it may not be the most pleasing on the eyes. We're... working on that. UPDATE: We worked on it.
 
 I have not been able to test this bot at scale yet, so keep in mind in may be a little buggy, especially with a higher number of users. If you're filling up 3-5+ parties at a time, then this bot may be a little slower than alternatives.
 
 ## Quick Setup
-To run the bot, all you need to do is pass the bot token to the .py file and run it. You will need to install discord.py first.
+To run the bot, all you need to do is pass the bot token to the config.py file and run tonguelash.py. You will need to install discord.py first.
 
-To make a queue, just run the ~create_queue command in the appropriate channel. The bot will create a queue and all subsequent messages will be directed to that channel.
+To make a queue, just run the ~create_queue command in the appropriate channel. The bot will create a qsueue and all subsequent messages will be directed to that channel.
 

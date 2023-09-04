@@ -100,6 +100,11 @@ async def pop_queue(prev_queue):
     if len(pop_handler.waiting_members) == 0:
         is_popping = False
         await create_game(pop_handler.popped_members)
+
+        # see if there's another queue waiting
+        if len(queue_handler.queue_members) >= config.players_per_game:
+            await pop_queue([])
+
     # if not decide between backfill and return to queue
     else:
         temp_members = pop_handler.popped_members.copy()
