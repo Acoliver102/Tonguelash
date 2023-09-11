@@ -18,10 +18,11 @@ is_popping = False
 # Buttons trigger events that move members between the 3 handlers
 class QueueButtons(discord.ui.View):
     def __init__(self):
-        super().__init__()
+        super().__init__(timeout=None)
 
     @discord.ui.button(label="Join Queue", style=discord.ButtonStyle.green)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        print("Join attempted.")
         await interaction.response.defer()
         await queue_handler.add_player_to_queue(interaction.user, get_all_players())
         # checking if queue is full
@@ -30,6 +31,7 @@ class QueueButtons(discord.ui.View):
 
     @discord.ui.button(label="Leave Queue", style=discord.ButtonStyle.danger)
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        print("Leave attempted.")
         await interaction.response.defer()
         await queue_handler.remove_player_from_queue(interaction.user)
 
@@ -37,7 +39,7 @@ class QueueButtons(discord.ui.View):
 #  need to check num of endcalls after every additional change
 class MatchButtons(discord.ui.View):
     def __init__(self):
-        super().__init__()
+        super().__init__(timeout=None)
 
     @discord.ui.button(label="Play Again!", style=discord.ButtonStyle.green)
     async def requeue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -63,7 +65,7 @@ class MatchButtons(discord.ui.View):
 # create_queue command
 # locked to admin, can comment out the @commands line to change this
 @bot.command()
-@commands.has_permissions(administrator=True)
+# @commands.has_permissions(administrator=True)
 async def create_queue(ctx):
     message = await ctx.send("", view=QueueButtons(),
                              embed=embeds.get_queue_embed(queue_members=queue_handler.queue_members))

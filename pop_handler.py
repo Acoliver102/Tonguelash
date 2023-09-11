@@ -20,7 +20,7 @@ end_time = ""
 # since these buttons only apply inside this handler they can be here
 class ReadyButton(discord.ui.View):
     def __init__(self, head_text):
-        super().__init__()
+        super().__init__(timeout=None)
         self.header = head_text
 
     @discord.ui.button(label="Ready!", style=discord.ButtonStyle.primary)
