@@ -164,7 +164,7 @@ async def end_game(game_msg):
         if len(queue_handler.queue_members) >= players_per_game and not is_popping:
             await pop_queue([])
     else:
-        await queue_handler.add_player_list_to_queue(list(filter(lambda x: x not in droppers, game_members)))
+        await queue_handler.add_players_to_queue_back(list(filter(lambda x: x not in droppers, game_members)))
         if len(queue_handler.queue_members) >= players_per_game and not is_popping:
             await pop_queue([])
 
