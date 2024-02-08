@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import time
 
 import config
@@ -22,11 +22,13 @@ class QueueButtons(discord.ui.View):
 
     @discord.ui.button(label="Join Queue", style=discord.ButtonStyle.green)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global is_popping
+
         print("Join attempted.")
         await interaction.response.defer()
         await queue_handler.add_player_to_queue(interaction.user, get_all_players())
         # checking if queue is full
-        if len(queue_handler.queue_members) == config.players_per_game:
+        if len(queue_handler.queue_members) == config.players_per_game and not is_popping:
             await pop_queue([])
 
     @discord.ui.button(label="Leave Queue", style=discord.ButtonStyle.danger)
@@ -60,6 +62,30 @@ class MatchButtons(discord.ui.View):
             if len(game_handler.endcalls[interaction.message]) >= config.min_endcalls:
                 print("Ending Game!")
                 await end_game(interaction.message)
+
+
+# class to handle running multiple GameTimers at once
+class GameTimer(commands.Cog):
+    def __init__(self, game_msg, game_members, game_content):
+        self.message = game_msg
+        self.members = game_members
+        self.content = game_content
+        self.timer.start()
+
+    def cog_unload(self):
+        self.timer.cancel()
+
+    @tasks.loop(seconds=1, count=60 * config.timer_min)
+    async def timer(self):
+        # see if there's another queue waiting
+        if len(queue_handler.queue_members) >= config.players_per_game and not is_popping:
+            await pop_queue([])
+
+    @timer.after_loop
+    async def after_timer(self):
+        await self.message.edit(content=self.content, view=MatchButtons(),
+                                embed=embeds.get_game_embed_timed_out(
+                                    game_members=self.members))
 
 
 # create_queue command
@@ -154,16 +180,35 @@ async def create_game(players):
         id = player.id
         temp += f'<@{id}> '
 
-    # create game message
-    game_message = await queue_handler.queue_channel.send(content=temp, view=MatchButtons(),
-                                                          embed=embeds.get_game_embed(
-                                                              game_members=players))
+    if not game_timer:
+        # create game message
+        game_message = await queue_handler.queue_channel.send(content=temp, view=MatchButtons(),
+                                                              embed=embeds.get_game_embed(
+                                                                  game_members=players))
 
-    # store game info in respective dictionaries
-    game_handler.store_game_info(game_message, players)
+        # store game info in respective dictionaries
+        game_handler.store_game_info(game_message, players)
+    else:
+        end_time = f'<t:{int(time.time()) + timer_min * 60}:R>'
+        # create game message
+        game_message = await queue_handler.queue_channel.send(content=temp, view=MatchButtons(),
+                                                              embed=embeds.get_game_embed_timer(
+                                                                  game_members=players, end_time=end_time))
+
+        # store game info in respective dictionaries
+        game_handler.store_game_info(game_message, players)
 
     # remove all players from pop list
     pop_handler.clear_pop()
+
+    if game_timer:
+        # start queue countdown
+        timer = GameTimer(game_message, players, temp)
+
+        # # remove the expired pop message
+        # await game_message.edit(content=temp, view=MatchButtons(),
+        #                         embed=embeds.get_game_embed_timed_out(
+        #                             game_members=players))
 
 
 # Removing a game from memory after it ends and returning players to queue
