@@ -108,3 +108,15 @@ def clear_pop():
     global popped_members
 
     popped_members = []
+
+
+# return list of those who have not accepted
+def get_waiting():
+    global waiting_members
+    return waiting_members
+
+
+# return list of popped members
+def get_popped():
+    global popped_members
+    return popped_members

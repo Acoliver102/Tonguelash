@@ -7,7 +7,7 @@ intents.message_content = True
 intents.reactions = True
 
 # bot token
-token = 'Bot token here!'
+token = 'Bot Token Here!'
 
 # all commands start with this char
 command_prefix = '~'
@@ -24,3 +24,10 @@ min_endcalls = 2
 
 # whether or not players in the previous party should be added to the front or back of queue
 return_to_front = False
+
+# whether the ping all unaccepted feature is enabled
+ping_unaccepted = True
+
+# whether to use a timer and if so for how long
+game_timer = True
+timer_min = 8

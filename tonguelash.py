@@ -75,6 +75,25 @@ async def create_queue(ctx):
     queue_handler.initialize_queue(queue_channel, queue_message)
 
 
+# ping unaccepted feature
+@bot.command()
+async def queue_ping(ctx):
+    # check configs
+    if ping_unaccepted:
+        # check if the user is waiting on a match or not
+        if ctx.message.author not in pop_handler.popped_members:
+            # if not avoid pinging
+            await ctx.send("You are not waiting in a pop.")
+        else:
+            # create a String with all waiting players
+            msg = "Waiting on:  \n"
+            for member in pop_handler.waiting_members:
+                id = member.id
+                msg += f'<@{id}> '
+            # output
+            await ctx.send(msg)
+
+
 # pop handler - takes players alr readied from prev pop as parameter to enable backfill
 async def pop_queue(prev_queue):
     global is_popping
