@@ -13,6 +13,8 @@ queue_members = []
 
 # make note of where the queue actually is located
 def initialize_queue(channel: discord.channel, message: discord.Message):
+    print("init")
+
     global queue_channel
     global queue_message
 
@@ -78,3 +80,10 @@ def move_first_n_members(n: int):
 
     return temp
 
+
+# return list with ids
+def get_queue_member_ids():
+    ids = []
+    for member in queue_members:
+        ids.append(member.id)
+    return ids

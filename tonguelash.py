@@ -2,17 +2,25 @@ import discord
 from discord.ext import commands, tasks
 import time
 
+from discord.utils import get
+
 import config
 import game_handler
 import pop_handler
 import queue_handler
 from config import *
 import embeds
+import json
+import random
+
+intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix=command_prefix, intents=intents)
 
 # global bool to prevent simultaneous pops
 is_popping = False
+
+save_info = {}
 
 
 # Buttons trigger events that move members between the 3 handlers
@@ -27,6 +35,13 @@ class QueueButtons(discord.ui.View):
         print("Join attempted.")
         await interaction.response.defer()
         await queue_handler.add_player_to_queue(interaction.user, get_all_players())
+
+        # save queue
+        global save_info
+        save_info["queue_players"] = queue_handler.get_queue_member_ids()
+        with open(save_name, "w") as save:
+            save.write(json.dumps(save_info))
+
         # checking if queue is full
         if len(queue_handler.queue_members) == config.players_per_game and not is_popping:
             await pop_queue([])
@@ -37,13 +52,19 @@ class QueueButtons(discord.ui.View):
         await interaction.response.defer()
         await queue_handler.remove_player_from_queue(interaction.user)
 
+        # save queue
+        global save_info
+        save_info["queue_players"] = queue_handler.queue_members
+        with open(save_name, "w") as save:
+            save.write(json.dumps(save_info))
+
 
 #  need to check num of endcalls after every additional change
 class MatchButtons(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Play Again!", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="Play Again!", style=discord.ButtonStyle.primary)
     async def requeue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if interaction.user in game_handler.games[interaction.message]:
@@ -53,7 +74,7 @@ class MatchButtons(discord.ui.View):
                 print("Ending Game!")
                 await end_game(interaction.message)
 
-    @discord.ui.button(label="Drop From Queue", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Drop From Queue", style=discord.ButtonStyle.gray)
     async def drop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if interaction.user in game_handler.games[interaction.message]:
@@ -75,12 +96,14 @@ class GameTimer(commands.Cog):
     def cog_unload(self):
         self.timer.cancel()
 
+    # needs to check for full queues while waiting to avoid blocking pops for the countdown
     @tasks.loop(seconds=1, count=60 * config.timer_min)
     async def timer(self):
         # see if there's another queue waiting
         if len(queue_handler.queue_members) >= config.players_per_game and not is_popping:
             await pop_queue([])
 
+    # on end of timer edit message to be cleaner
     @timer.after_loop
     async def after_timer(self):
         await self.message.edit(content=self.content, view=MatchButtons(),
@@ -88,15 +111,60 @@ class GameTimer(commands.Cog):
                                     game_members=self.members))
 
 
+# on ready, check_save
+@bot.event
+async def on_ready():
+    try:
+        global save_info
+
+        with open(save_name, "r") as save:
+            save_text = save.read()
+            save_data = json.loads(save_text)
+
+            save_info = save_data
+
+            queue_channel = bot.get_channel(save_data["queue_channel_id"])
+            queue_req = queue_channel.fetch_message(save_data["queue_msg_id"])
+            queue_message = await queue_req
+            queue_guild = bot.get_guild(save_data["queue_guild"])
+
+            queue_handler.initialize_queue(queue_channel, queue_message)
+
+            for player_id in save_data["queue_players"]:
+                await queue_handler.add_player_to_queue(queue_guild.get_member(player_id), get_all_players())
+
+            await queue_message.edit(view=QueueButtons(),
+                                     embed=embeds.get_queue_embed(queue_members=queue_handler.queue_members))
+
+        with open(save_name, "w") as save:
+            print(save_data)
+            save.write(json.dumps(save_data))
+            return
+
+    except:
+        print("Save does not exist or failed. Please recreate the queue.")
+        return
+
+
 # create_queue command
 # locked to admin, can comment out the @commands line to change this
 @bot.command()
 # @commands.has_permissions(administrator=True)
 async def create_queue(ctx):
+    global save_info
+
     message = await ctx.send("", view=QueueButtons(),
                              embed=embeds.get_queue_embed(queue_members=queue_handler.queue_members))
     queue_message = message
     queue_channel = message.channel
+
+    # store channel, message data in JSON
+    save_info = {"queue_msg_id": queue_message.id,
+                 "queue_guild": ctx.message.guild.id,
+                 "queue_channel_id": queue_channel.id,
+                 "queue_players": []}
+    with open(save_name, "w") as save:
+        save.write(json.dumps(save_info))
 
     queue_handler.initialize_queue(queue_channel, queue_message)
 
@@ -120,6 +188,36 @@ async def queue_ping(ctx):
             await ctx.send(msg)
 
 
+# suggest teams feature
+@bot.command()
+async def suggest_teams(ctx, num_suggests: int = 1):
+    # check if player is in a match
+    players = game_handler.get_party_of_player(ctx.message.author)
+    if len(players) == 0:
+        await ctx.send("You are not in a game.")
+        return
+
+    suggest_msg = ""
+
+    # iterate over the players
+    for i in range(num_suggests):
+        # shuffle players
+        random.shuffle(players)
+
+        suggest_msg += "Suggestion " + str(i + 1) + "\n"
+        suggest_msg += "Team 0: "
+
+        for index in range(len(players)):
+            name = players[index].display_name
+            suggest_msg += name + ' '
+            if index == len(players) // 2 - 1:
+                suggest_msg += "\nTeam 1: "
+
+        suggest_msg += "\n\n"
+
+    await ctx.send(suggest_msg)
+
+
 # pop handler - takes players alr readied from prev pop as parameter to enable backfill
 async def pop_queue(prev_queue):
     global is_popping
@@ -135,6 +233,11 @@ async def pop_queue(prev_queue):
     fill_players = queue_handler.move_first_n_members(players_needed)
 
     popped_queue = prev_queue + fill_players
+
+    # if DM notifs are toggled on then loop over and DM all players
+    if dm_notifs:
+        for player in fill_players:
+            await player.send("Party found! Go to {}.".format(queue_handler.queue_channel.mention))
 
     # update queue
     await queue_handler.queue_message.edit(content="",
@@ -169,6 +272,12 @@ async def pop_queue(prev_queue):
             pop_handler.clear_pop()
             for member in temp_members:
                 await queue_handler.add_player_to_queue(member, get_all_players())
+
+    # save queue at the end of all that
+    global save_info
+    save_info["queue_players"] = queue_handler.get_queue_member_ids()
+    with open(save_name, "w") as save:
+        save.write(json.dumps(save_info))
 
 
 # After a ready sequence can create a game

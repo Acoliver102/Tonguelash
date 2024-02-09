@@ -40,3 +40,12 @@ def del_game_info(game_message):
     del games[game_message]
     del drops[game_message]
     del endcalls[game_message]
+
+
+# given a player return list of all players in their current party
+def get_party_of_player(player):
+    for game, players in games.items():
+        if player in players:
+            return players
+
+    return []

@@ -31,3 +31,9 @@ ping_unaccepted = True
 # whether to use a timer and if so for how long
 game_timer = True
 timer_min = 8
+
+# whether DM notifications are on or not
+dm_notifs = True
+
+# save file name
+save_name = "save.json"
