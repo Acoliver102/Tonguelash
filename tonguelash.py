@@ -54,7 +54,7 @@ class QueueButtons(discord.ui.View):
 
         # save queue
         global save_info
-        save_info["queue_players"] = queue_handler.queue_members
+        save_info["queue_players"] = queue_handler.get_queue_member_ids()
         with open(save_name, "w") as save:
             save.write(json.dumps(save_info))
 
@@ -111,36 +111,48 @@ class GameTimer(commands.Cog):
                                     game_members=self.members))
 
 
-# on ready, check_save
+# on ready, look at save JSON and attempt to reinitialize queue on restart
 @bot.event
 async def on_ready():
+    # global try-catch just helps with a number of things (corrupt saves, non-exist saves, etc.)
+    # TODO: Rework to be more specific
     try:
+        # load in save dict
         global save_info
 
+        # read in old save file
         with open(save_name, "r") as save:
             save_text = save.read()
             save_data = json.loads(save_text)
 
+            # save old data to save_dict
             save_info = save_data
 
+            # get requisite, guild, channel, message for queue location
             queue_channel = bot.get_channel(save_data["queue_channel_id"])
             queue_req = queue_channel.fetch_message(save_data["queue_msg_id"])
             queue_message = await queue_req
             queue_guild = bot.get_guild(save_data["queue_guild"])
 
+            # save queue location
             queue_handler.initialize_queue(queue_channel, queue_message)
 
+            # load saved players into queue
             for player_id in save_data["queue_players"]:
                 await queue_handler.add_player_to_queue(queue_guild.get_member(player_id), get_all_players())
 
+            # update queue message to reflect this fact
             await queue_message.edit(view=QueueButtons(),
                                      embed=embeds.get_queue_embed(queue_members=queue_handler.queue_members))
 
+        # TODO: is this even necessary
+        # write all the data to save again
         with open(save_name, "w") as save:
             print(save_data)
             save.write(json.dumps(save_data))
             return
 
+    # let people know that there was an error
     except:
         print("Save does not exist or failed. Please recreate the queue.")
         return
@@ -204,6 +216,7 @@ async def suggest_teams(ctx, num_suggests: int = 1):
         # shuffle players
         random.shuffle(players)
 
+        # loop through players and suggest teams
         suggest_msg += "Suggestion " + str(i + 1) + "\n"
         suggest_msg += "Team 0: "
 
